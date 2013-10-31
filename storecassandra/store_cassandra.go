@@ -56,6 +56,12 @@ func New(conf config.Config, timeProvider timeprovider.TimeProvider) (*StoreCass
 		return s, err
 	}
 
+	err = s.session.Query(`CREATE TABLE IF NOT EXISTS CrashCounts (app_guid text, app_version text, instance_index int, crash_count int, created_at bigint, expires bigint, PRIMARY KEY (app_guid, app_version, instance_index))`).Exec()
+	if err != nil {
+		println("FAILED TO CREATE TABLE CrashCounts")
+		return s, err
+	}
+
 	err = s.session.Query(`CREATE TABLE IF NOT EXISTS PendingStartMessages (app_guid text, app_version text, message_id text, send_on bigint, sent_on bigint, keep_alive int, index_to_start int, priority double, skip_verification boolean, PRIMARY KEY (app_guid, app_version, index_to_start))`).Exec()
 	if err != nil {
 		println("FAILED TO CREATE TABLE PendingStartMessages")
@@ -188,6 +194,58 @@ func (s *StoreCassandra) GetActualState() (map[string]models.InstanceHeartbeat, 
 				StateTimestamp: float64(stateTimestamp),
 			}
 			result[actualState.StoreKey()] = actualState
+		}
+	}
+
+	err = iter.Close()
+
+	return result, err
+}
+
+func (s *StoreCassandra) SaveCrashCounts(crashCounts ...models.CrashCount) error {
+	for _, crashCount := range crashCounts {
+		err := s.session.Query(`INSERT INTO CrashCounts (app_guid, app_version, instance_index, crash_count, created_at, expires) VALUES (?, ?, ?, ?, ?, ?)`,
+			crashCount.AppGuid,
+			crashCount.AppVersion,
+			int32(crashCount.InstanceIndex),
+			int32(crashCount.CrashCount),
+			crashCount.CreatedAt,
+			s.timeProvider.Time().Unix()+int64(s.conf.MaximumBackoffDelay().Seconds()*2)).Exec()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *StoreCassandra) GetCrashCounts() (map[string]models.CrashCount, error) {
+	result := map[string]models.CrashCount{}
+	var err error
+
+	iter := s.session.Query(`SELECT app_guid, app_version, instance_index, crash_count, created_at, expires FROM CrashCounts`).Iter()
+
+	var appGuid, appVersion string
+	var instanceIndex, crashCount int32
+	var createdAt, expires int64
+
+	currentTime := s.timeProvider.Time().Unix()
+
+	for iter.Scan(&appGuid, &appVersion, &instanceIndex, &crashCount, &createdAt, &expires) {
+		if expires <= currentTime {
+			err := s.session.Query(`DELETE FROM CrashCounts WHERE app_guid=? AND app_version=? AND instance_index = ?`, appGuid, appVersion, instanceIndex).Exec()
+			if err != nil {
+				return result, err
+			}
+		} else {
+			crashCount := models.CrashCount{
+				AppGuid:       appGuid,
+				AppVersion:    appVersion,
+				InstanceIndex: int(instanceIndex),
+				CrashCount:    int(crashCount),
+				CreatedAt:     createdAt,
+			}
+			result[crashCount.StoreKey()] = crashCount
 		}
 	}
 

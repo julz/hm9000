@@ -32,6 +32,9 @@ var _ = Describe("Storecassandra", func() {
 	var app1 appfixture.AppFixture
 	var app2 appfixture.AppFixture
 
+	var crashCount1 models.CrashCount
+	var crashCount2 models.CrashCount
+
 	var startMessage1 models.PendingStartMessage
 	var startMessage2 models.PendingStartMessage
 
@@ -198,6 +201,79 @@ var _ = Describe("Storecassandra", func() {
 					Ω(err).ShouldNot(HaveOccured())
 					Ω(state).Should(HaveLen(1))
 					Ω(state[modifiedHeartbeat.StoreKey()]).Should(Equal(modifiedHeartbeat))
+				})
+			})
+		})
+	})
+
+	Describe("Crash State", func() {
+		BeforeEach(func() {
+			crashCount1 = models.CrashCount{
+				AppGuid:       "foo",
+				AppVersion:    "123",
+				InstanceIndex: 0,
+				CrashCount:    2,
+				CreatedAt:     1,
+			}
+			crashCount2 = models.CrashCount{
+				AppGuid:       "foo",
+				AppVersion:    "123",
+				InstanceIndex: 1,
+				CrashCount:    1,
+				CreatedAt:     3,
+			}
+		})
+
+		Describe("Writing and reading crash counts", func() {
+			BeforeEach(func() {
+				err := store.SaveCrashCounts(crashCount1, crashCount2)
+				Ω(err).ShouldNot(HaveOccured())
+			})
+
+			It("should return the stored counts", func() {
+				state, err := store.GetCrashCounts()
+				Ω(err).ShouldNot(HaveOccured())
+				Ω(state).Should(HaveLen(2))
+
+				Ω(state[crashCount1.StoreKey()]).Should(Equal(crashCount1))
+				Ω(state[crashCount2.StoreKey()]).Should(Equal(crashCount2))
+			})
+
+			Context("when the TTL expires", func() {
+				BeforeEach(func() {
+					timeProvider.IncrementBySeconds(uint64(conf.MaximumBackoffDelay().Seconds()) * 2)
+				})
+
+				It("should expire the nodes appropriately", func() {
+					state, err := store.GetCrashCounts()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(state).Should(HaveLen(0))
+				})
+			})
+
+			Describe("Updating Crash state", func() {
+				BeforeEach(func() {
+					timeProvider.IncrementBySeconds(uint64(conf.MaximumBackoffDelay().Seconds())*2 - 10)
+					crashCount2.CrashCount += 1
+					err := store.SaveCrashCounts(crashCount2)
+					Ω(err).ShouldNot(HaveOccured())
+				})
+
+				It("should update the correct entry", func() {
+					state, err := store.GetCrashCounts()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(state).Should(HaveLen(2))
+
+					Ω(state[crashCount1.StoreKey()]).Should(Equal(crashCount1))
+					Ω(state[crashCount2.StoreKey()]).Should(Equal(crashCount2))
+				})
+
+				It("should bump the TTL", func() {
+					timeProvider.IncrementBySeconds(10)
+					state, err := store.GetCrashCounts()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(state).Should(HaveLen(1))
+					Ω(state[crashCount2.StoreKey()]).Should(Equal(crashCount2))
 				})
 			})
 		})
