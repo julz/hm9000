@@ -93,7 +93,7 @@ var _ = Describe("Storecassandra", func() {
 
 			Context("when the TTL expires", func() {
 				BeforeEach(func() {
-					timeProvider.TimeToProvide = time.Unix(100+int64(conf.DesiredStateTTL()), 0)
+					timeProvider.IncrementBySeconds(conf.DesiredStateTTL())
 				})
 
 				It("should expire the nodes appropriately", func() {
@@ -105,7 +105,7 @@ var _ = Describe("Storecassandra", func() {
 
 			Describe("Updating desired state", func() {
 				BeforeEach(func() {
-					timeProvider.TimeToProvide = time.Unix(100+int64(conf.DesiredStateTTL())-10, 0)
+					timeProvider.IncrementBySeconds(conf.DesiredStateTTL() - 10)
 
 					err := store.SaveDesiredState(app2.DesiredState(2))
 					Ω(err).ShouldNot(HaveOccured())
@@ -121,7 +121,7 @@ var _ = Describe("Storecassandra", func() {
 				})
 
 				It("should bump the TTL", func() {
-					timeProvider.TimeToProvide = time.Unix(100+int64(conf.DesiredStateTTL()), 0)
+					timeProvider.IncrementBySeconds(10)
 					state, err := store.GetDesiredState()
 					Ω(err).ShouldNot(HaveOccured())
 					Ω(state).Should(HaveLen(1))
@@ -141,11 +141,66 @@ var _ = Describe("Storecassandra", func() {
 				})
 			})
 		})
+	})
 
-		//can put multiple desireds in and get them all out
-		//can put multiple desireds in, delete some of them, and have the correct subset left
-		//we should be able to updated a desired
-		//test TTL behavior (creating a node, and updating a node)
+	Describe("Actual State", func() {
+		Describe("Writing and reading actual state", func() {
+			BeforeEach(func() {
+				err := store.SaveActualState(app1.InstanceAtIndex(0).Heartbeat(), app2.InstanceAtIndex(1).Heartbeat())
+				Ω(err).ShouldNot(HaveOccured())
+			})
+
+			It("should return the stored actual state", func() {
+				state, err := store.GetActualState()
+				Ω(err).ShouldNot(HaveOccured())
+				Ω(state).Should(HaveLen(2))
+
+				Ω(state[app1.InstanceAtIndex(0).Heartbeat().StoreKey()]).Should(Equal(app1.InstanceAtIndex(0).Heartbeat()))
+				Ω(state[app2.InstanceAtIndex(1).Heartbeat().StoreKey()]).Should(Equal(app2.InstanceAtIndex(1).Heartbeat()))
+			})
+
+			Context("when the TTL expires", func() {
+				BeforeEach(func() {
+					timeProvider.IncrementBySeconds(conf.HeartbeatTTL())
+				})
+
+				It("should expire the nodes appropriately", func() {
+					state, err := store.GetActualState()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(state).Should(HaveLen(0))
+				})
+			})
+
+			Describe("Updating Actual state", func() {
+				var modifiedHeartbeat models.InstanceHeartbeat
+
+				BeforeEach(func() {
+					timeProvider.IncrementBySeconds(conf.HeartbeatTTL() - 10)
+
+					modifiedHeartbeat = app2.InstanceAtIndex(1).Heartbeat()
+					modifiedHeartbeat.State = models.InstanceStateCrashed
+					err := store.SaveActualState(modifiedHeartbeat)
+					Ω(err).ShouldNot(HaveOccured())
+				})
+
+				It("should update the correct entry", func() {
+					state, err := store.GetActualState()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(state).Should(HaveLen(2))
+
+					Ω(state[app1.InstanceAtIndex(0).Heartbeat().StoreKey()]).Should(Equal(app1.InstanceAtIndex(0).Heartbeat()))
+					Ω(state[modifiedHeartbeat.StoreKey()]).Should(Equal(modifiedHeartbeat))
+				})
+
+				It("should bump the TTL", func() {
+					timeProvider.IncrementBySeconds(10)
+					state, err := store.GetActualState()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(state).Should(HaveLen(1))
+					Ω(state[modifiedHeartbeat.StoreKey()]).Should(Equal(modifiedHeartbeat))
+				})
+			})
+		})
 	})
 
 	Describe("Pending Start Messages", func() {

@@ -50,6 +50,12 @@ func New(conf config.Config, timeProvider timeprovider.TimeProvider) (*StoreCass
 		return s, err
 	}
 
+	err = s.session.Query(`CREATE TABLE IF NOT EXISTS ActualStates (app_guid text, app_version text, instance_guid text, instance_index int, state text, state_timestamp bigint, cc_partition text, expires bigint, PRIMARY KEY (app_guid, app_version, instance_guid))`).Exec()
+	if err != nil {
+		println("FAILED TO CREATE TABLE ActualStates")
+		return s, err
+	}
+
 	err = s.session.Query(`CREATE TABLE IF NOT EXISTS PendingStartMessages (app_guid text, app_version text, message_id text, send_on bigint, sent_on bigint, keep_alive int, index_to_start int, priority double, skip_verification boolean, PRIMARY KEY (app_guid, app_version, index_to_start))`).Exec()
 	if err != nil {
 		println("FAILED TO CREATE TABLE PendingStartMessages")
@@ -132,6 +138,62 @@ func (s *StoreCassandra) DeleteDesiredState(desiredStates ...models.DesiredAppSt
 	}
 
 	return nil
+}
+
+func (s *StoreCassandra) SaveActualState(actualStates ...models.InstanceHeartbeat) error {
+	for _, state := range actualStates {
+		err := s.session.Query(`INSERT INTO ActualStates (app_guid, app_version, instance_guid, instance_index, state, state_timestamp, cc_partition, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			state.AppGuid,
+			state.AppVersion,
+			state.InstanceGuid,
+			int32(state.InstanceIndex),
+			state.State,
+			int64(state.StateTimestamp),
+			state.CCPartition,
+			s.timeProvider.Time().Unix()+int64(s.conf.HeartbeatTTL())).Exec()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *StoreCassandra) GetActualState() (map[string]models.InstanceHeartbeat, error) {
+	result := map[string]models.InstanceHeartbeat{}
+	var err error
+
+	iter := s.session.Query(`SELECT app_guid, app_version, instance_guid, instance_index, state, state_timestamp, cc_partition, expires FROM ActualStates`).Iter()
+
+	var appGuid, appVersion, instanceGuid, state, ccPartition string
+	var instanceIndex int32
+	var stateTimestamp, expires int64
+
+	currentTime := s.timeProvider.Time().Unix()
+
+	for iter.Scan(&appGuid, &appVersion, &instanceGuid, &instanceIndex, &state, &stateTimestamp, &ccPartition, &expires) {
+		if expires <= currentTime {
+			err := s.session.Query(`DELETE FROM ActualStates WHERE app_guid=? AND app_version=? AND instance_guid = ?`, appGuid, appVersion, instanceGuid).Exec()
+			if err != nil {
+				return result, err
+			}
+		} else {
+			actualState := models.InstanceHeartbeat{
+				CCPartition:    ccPartition,
+				AppGuid:        appGuid,
+				AppVersion:     appVersion,
+				InstanceGuid:   instanceGuid,
+				InstanceIndex:  int(instanceIndex),
+				State:          models.InstanceState(state),
+				StateTimestamp: float64(stateTimestamp),
+			}
+			result[actualState.StoreKey()] = actualState
+		}
+	}
+
+	err = iter.Close()
+
+	return result, err
 }
 
 func (s *StoreCassandra) SavePendingStartMessages(startMessages ...models.PendingStartMessage) error {
