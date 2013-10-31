@@ -83,6 +83,168 @@ func New(conf config.Config, timeProvider timeprovider.TimeProvider) (*StoreCass
 	return s, err
 }
 
+func (s *StoreCassandra) AppKey(appGuid string, appVersion string) string {
+	return appGuid + "-" + appVersion
+}
+
+func (s *StoreCassandra) GetApps() (map[string]*models.App, error) {
+	apps := map[string]*models.App{}
+
+	desiredStates, err := s.GetDesiredState()
+	if err != nil {
+		return apps, err
+	}
+
+	actualStates, err := s.GetActualState()
+	if err != nil {
+		return apps, err
+	}
+
+	crashCounts, err := s.GetCrashCounts()
+	if err != nil {
+		return apps, err
+	}
+
+	for _, desiredState := range desiredStates {
+		key := s.AppKey(desiredState.AppGuid, desiredState.AppVersion)
+		apps[key] = models.NewApp(desiredState.AppGuid, desiredState.AppVersion, desiredState, []models.InstanceHeartbeat{}, map[int]models.CrashCount{})
+	}
+
+	for _, actualState := range actualStates {
+		key := s.AppKey(actualState.AppGuid, actualState.AppVersion)
+		app, found := apps[key]
+
+		if found {
+			app.InstanceHeartbeats = append(app.InstanceHeartbeats, actualState)
+		} else {
+			apps[key] = models.NewApp(actualState.AppGuid, actualState.AppVersion, models.DesiredAppState{}, []models.InstanceHeartbeat{actualState}, map[int]models.CrashCount{})
+		}
+	}
+
+	for _, crashCount := range crashCounts {
+		key := s.AppKey(crashCount.AppGuid, crashCount.AppVersion)
+		app, found := apps[key]
+
+		if found {
+			app.CrashCounts[crashCount.InstanceIndex] = crashCount
+		}
+	}
+
+	return apps, nil
+}
+
+func (s *StoreCassandra) GetApp(appGuid string, appVersion string) (*models.App, error) {
+	desiredState, err := s.getDesiredStateForApp(appGuid, appVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	actualStates, err := s.getActualStatesForApp(appGuid, appVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if desiredState.AppGuid == "" && len(actualStates) == 0 {
+		return nil, store.AppNotFoundError
+	}
+
+	crashCounts, err := s.getCrashCountsForApp(appGuid, appVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	return models.NewApp(appGuid, appVersion, desiredState, actualStates, crashCounts), nil
+}
+
+func (s *StoreCassandra) getDesiredStateForApp(appGuid string, appVersion string) (models.DesiredAppState, error) {
+	var state, packageState string
+	var numberOfInstances, memory int32
+	var updatedAt, expires int64
+
+	desiredState := models.DesiredAppState{}
+
+	err := s.session.Query(`SELECT number_of_instances, memory, state, package_state, updated_at, expires FROM DesiredStates WHERE app_guid = ? AND app_version = ?`, appGuid, appVersion).Scan(&numberOfInstances, &memory, &state, &packageState, &updatedAt, &expires)
+	if err == gocql.ErrNotFound {
+		return desiredState, nil
+	} else if err != nil {
+		return desiredState, err
+	}
+
+	if expires > s.timeProvider.Time().Unix() {
+		desiredState = models.DesiredAppState{
+			AppGuid:           appGuid,
+			AppVersion:        appVersion,
+			NumberOfInstances: int(numberOfInstances),
+			Memory:            int(memory),
+			State:             models.AppState(state),
+			PackageState:      models.AppPackageState(packageState),
+			UpdatedAt:         time.Unix(updatedAt, 0),
+		}
+	}
+	return desiredState, nil
+}
+
+func (s *StoreCassandra) getActualStatesForApp(appGuid string, appVersion string) ([]models.InstanceHeartbeat, error) {
+	result := []models.InstanceHeartbeat{}
+	var err error
+
+	iter := s.session.Query(`SELECT instance_guid, instance_index, state, state_timestamp, cc_partition, expires FROM ActualStates WHERE app_guid = ? AND app_version = ?`, appGuid, appVersion).Iter()
+
+	var instanceGuid, state, ccPartition string
+	var instanceIndex int32
+	var stateTimestamp, expires int64
+
+	currentTime := s.timeProvider.Time().Unix()
+
+	for iter.Scan(&instanceGuid, &instanceIndex, &state, &stateTimestamp, &ccPartition, &expires) {
+		if expires > currentTime {
+			actualState := models.InstanceHeartbeat{
+				CCPartition:    ccPartition,
+				AppGuid:        appGuid,
+				AppVersion:     appVersion,
+				InstanceGuid:   instanceGuid,
+				InstanceIndex:  int(instanceIndex),
+				State:          models.InstanceState(state),
+				StateTimestamp: float64(stateTimestamp),
+			}
+			result = append(result, actualState)
+		}
+	}
+
+	err = iter.Close()
+
+	return result, err
+}
+
+func (s *StoreCassandra) getCrashCountsForApp(appGuid string, appVersion string) (map[int]models.CrashCount, error) {
+	result := map[int]models.CrashCount{}
+	var err error
+
+	iter := s.session.Query(`SELECT instance_index, crash_count, created_at, expires FROM CrashCounts WHERE app_guid = ? AND app_version = ?`, appGuid, appVersion).Iter()
+
+	var instanceIndex, crashCount int32
+	var createdAt, expires int64
+
+	currentTime := s.timeProvider.Time().Unix()
+
+	for iter.Scan(&instanceIndex, &crashCount, &createdAt, &expires) {
+		if expires > currentTime {
+			crashCount := models.CrashCount{
+				AppGuid:       appGuid,
+				AppVersion:    appVersion,
+				InstanceIndex: int(instanceIndex),
+				CrashCount:    int(crashCount),
+				CreatedAt:     createdAt,
+			}
+			result[crashCount.InstanceIndex] = crashCount
+		}
+	}
+
+	err = iter.Close()
+
+	return result, err
+}
+
 func (s *StoreCassandra) SaveDesiredState(desiredStates ...models.DesiredAppState) error {
 	for _, state := range desiredStates {
 		err := s.session.Query(`INSERT INTO DesiredStates (app_guid, app_version, number_of_instances, memory, state, package_state, updated_at, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, state.AppGuid, state.AppVersion, state.NumberOfInstances, state.Memory, state.State, state.PackageState, int64(state.UpdatedAt.Unix()), s.timeProvider.Time().Unix()+int64(s.conf.DesiredStateTTL())).Exec()

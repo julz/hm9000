@@ -58,26 +58,6 @@ var _ = Describe("Storecassandra", func() {
 		app2 = appfixture.NewAppFixture()
 	})
 
-	XMeasure("Quick", func(b Benchmarker) {
-		n := 10000
-		desired := []models.DesiredAppState{}
-		for i := 0; i < n; i++ {
-			app := appfixture.NewAppFixture()
-			desired = append(desired, app.DesiredState(1))
-		}
-
-		b.Time("WRITE", func() {
-			err := store.SaveDesiredState(desired...)
-			Ω(err).ShouldNot(HaveOccured())
-		})
-
-		b.Time("READ", func() {
-			state, err := store.GetDesiredState()
-			Ω(err).ShouldNot(HaveOccured())
-			Ω(state).Should(HaveLen(n))
-		})
-	}, 5)
-
 	Describe("Desired State", func() {
 		Describe("Writing and reading desired state", func() {
 			BeforeEach(func() {
@@ -548,6 +528,139 @@ var _ = Describe("Storecassandra", func() {
 					Ω(store.VerifyFreshness(timeProvider.Time())).Should(BeNil())
 				})
 			})
+		})
+	})
+
+	Describe("Getting Apps", func() {
+		var app3, app4 appfixture.AppFixture
+		BeforeEach(func() {
+
+			//4 apps: app1 has desired, actual & crashes, app2 has desired only, app3 has actual only, app4 has crashes only
+			app3 = appfixture.NewAppFixture()
+			app4 = appfixture.NewAppFixture()
+
+			crashCount1 = models.CrashCount{
+				AppGuid:       app1.AppGuid,
+				AppVersion:    app1.AppVersion,
+				InstanceIndex: 0,
+				CrashCount:    2,
+				CreatedAt:     1,
+			}
+			crashCount2 = models.CrashCount{
+				AppGuid:       app4.AppGuid,
+				AppVersion:    app4.AppVersion,
+				InstanceIndex: 1,
+				CrashCount:    1,
+				CreatedAt:     4,
+			}
+
+			store.SaveDesiredState(app1.DesiredState(1), app2.DesiredState(3))
+			store.SaveActualState(app1.InstanceAtIndex(0).Heartbeat(), app3.InstanceAtIndex(2).Heartbeat())
+			store.SaveCrashCounts(crashCount1, crashCount2)
+
+		})
+
+		Describe("GetApp()", func() {
+			Context("when the app has actual & desired state", func() {
+				It("should return the app", func() {
+					app, err := store.GetApp(app1.AppGuid, app1.AppVersion)
+					Ω(err).ShouldNot(HaveOccured())
+
+					Ω(app.AppGuid).Should(Equal(app1.AppGuid))
+					Ω(app.AppVersion).Should(Equal(app1.AppVersion))
+					Ω(app.Desired).Should(EqualDesiredState(app1.DesiredState(1)))
+					Ω(app.InstanceHeartbeats).Should(ContainElement(app1.InstanceAtIndex(0).Heartbeat()))
+					Ω(app.CrashCounts[0]).Should(Equal(crashCount1))
+				})
+			})
+
+			Context("when the app has desired state only", func() {
+				It("should return the app", func() {
+					app, err := store.GetApp(app2.AppGuid, app2.AppVersion)
+					Ω(err).ShouldNot(HaveOccured())
+
+					Ω(app.AppGuid).Should(Equal(app2.AppGuid))
+					Ω(app.AppVersion).Should(Equal(app2.AppVersion))
+					Ω(app.Desired).Should(EqualDesiredState(app2.DesiredState(3)))
+					Ω(app.InstanceHeartbeats).Should(BeEmpty())
+					Ω(app.CrashCounts).Should(BeEmpty())
+				})
+			})
+
+			Context("when the app has actual state only", func() {
+				It("should return the app", func() {
+					app, err := store.GetApp(app3.AppGuid, app3.AppVersion)
+					Ω(err).ShouldNot(HaveOccured())
+
+					Ω(app.AppGuid).Should(Equal(app3.AppGuid))
+					Ω(app.AppVersion).Should(Equal(app3.AppVersion))
+					Ω(app.Desired).Should(BeZero())
+					Ω(app.InstanceHeartbeats).Should(ContainElement(app3.InstanceAtIndex(2).Heartbeat()))
+					Ω(app.CrashCounts).Should(BeEmpty())
+				})
+			})
+
+			Context("when the app has crash counts only", func() {
+				It("should return nil and report that the app was not found", func() {
+					app, err := store.GetApp(app4.AppGuid, app4.AppVersion)
+					Ω(app).Should(BeNil())
+					Ω(err).Should(Equal(storepackage.AppNotFoundError))
+				})
+			})
+
+			Context("when the app is not present", func() {
+				It("should return nil and report that the app was not found", func() {
+					app, err := store.GetApp("no guid!", "0.0.0")
+					Ω(app).Should(BeNil())
+					Ω(err).Should(Equal(storepackage.AppNotFoundError))
+				})
+			})
+
+			Context("when ttls have expired", func() {
+				BeforeEach(func() {
+					timeProvider.IncrementBySeconds(100000000)
+				})
+
+				It("should return no apps", func() {
+					for _, appFixture := range []appfixture.AppFixture{app1, app2, app3, app4} {
+						app, err := store.GetApp(appFixture.AppGuid, appFixture.AppVersion)
+						Ω(app).Should(BeNil())
+						Ω(err).Should(Equal(storepackage.AppNotFoundError))
+					}
+				})
+			})
+		})
+
+		Describe("GetApps()", func() {
+			It("should return a hash for any apps that have actual and/or desired state", func() {
+				apps, err := store.GetApps()
+				Ω(err).ShouldNot(HaveOccured())
+				Ω(apps).Should(HaveLen(3))
+
+				for _, appFixture := range []appfixture.AppFixture{app1, app2, app3} {
+					app, err := store.GetApp(appFixture.AppGuid, appFixture.AppVersion)
+					Ω(err).ShouldNot(HaveOccured())
+					key := store.AppKey(app.AppGuid, app.AppVersion)
+					Ω(apps[key].AppGuid).Should(Equal(app.AppGuid))
+					Ω(apps[key].AppVersion).Should(Equal(app.AppVersion))
+					Ω(apps[key].Desired).Should(EqualDesiredState(app.Desired))
+					Ω(apps[key].InstanceHeartbeats).Should(Equal(app.InstanceHeartbeats))
+					Ω(apps[key].CrashCounts).Should(Equal(app.CrashCounts))
+				}
+			})
+
+			Context("when ttls have expired", func() {
+				BeforeEach(func() {
+					timeProvider.IncrementBySeconds(100000000)
+				})
+
+				It("should return no apps", func() {
+					apps, err := store.GetApps()
+					Ω(err).ShouldNot(HaveOccured())
+					Ω(apps).Should(BeEmpty())
+				})
+			})
+
 		})
 	})
 })
