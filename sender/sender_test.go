@@ -104,7 +104,7 @@ var _ = Describe("Sender", func() {
 
 		JustBeforeEach(func() {
 			store.SaveDesiredState(app1.DesiredState(1))
-			pendingMessage = models.NewPendingStartMessage(time.Unix(100, 0), 30, keepAliveTime, app1.AppGuid, app1.AppVersion, 0, 1.0)
+			pendingMessage = models.NewPendingStartMessage(time.Unix(100, 0), 30, keepAliveTime, app1.AppGuid, app1.AppVersion, 0, 1.0, models.PendingStartMessageReasonInvalid)
 			pendingMessage.SentOn = sentOn
 			store.SavePendingStartMessages(
 				pendingMessage,
@@ -260,7 +260,7 @@ var _ = Describe("Sender", func() {
 				app1.InstanceAtIndex(1).Heartbeat(),
 			)
 
-			pendingMessage = models.NewPendingStopMessage(time.Unix(100, 0), 30, keepAliveTime, app1.AppGuid, app1.AppVersion, app1.InstanceAtIndex(0).InstanceGuid)
+			pendingMessage = models.NewPendingStopMessage(time.Unix(100, 0), 30, keepAliveTime, app1.AppGuid, app1.AppVersion, app1.InstanceAtIndex(0).InstanceGuid, models.PendingStopMessageReasonInvalid)
 			pendingMessage.SentOn = sentOn
 			store.SavePendingStopMessages(
 				pendingMessage,
@@ -419,7 +419,7 @@ var _ = Describe("Sender", func() {
 
 		JustBeforeEach(func() {
 			timeProvider.TimeToProvide = time.Unix(130, 0)
-			pendingMessage = models.NewPendingStartMessage(time.Unix(100, 0), 30, 10, app1.AppGuid, app1.AppVersion, indexToStart, 1.0)
+			pendingMessage = models.NewPendingStartMessage(time.Unix(100, 0), 30, 10, app1.AppGuid, app1.AppVersion, indexToStart, 1.0, models.PendingStartMessageReasonInvalid)
 			pendingMessage.SentOn = 0
 			pendingMessage.SkipVerification = skipVerification
 			store.SavePendingStartMessages(
@@ -548,7 +548,7 @@ var _ = Describe("Sender", func() {
 
 		JustBeforeEach(func() {
 			timeProvider.TimeToProvide = time.Unix(130, 0)
-			pendingMessage = models.NewPendingStopMessage(time.Unix(100, 0), 30, 10, app1.AppGuid, app1.AppVersion, app1.InstanceAtIndex(indexToStop).InstanceGuid)
+			pendingMessage = models.NewPendingStopMessage(time.Unix(100, 0), 30, 10, app1.AppGuid, app1.AppVersion, app1.InstanceAtIndex(indexToStop).InstanceGuid, models.PendingStopMessageReasonInvalid)
 			pendingMessage.SentOn = 0
 			store.SavePendingStopMessages(
 				pendingMessage,
@@ -703,28 +703,28 @@ var _ = Describe("Sender", func() {
 				)
 
 				//only some of these should be sent:
-				validStartMessage := models.NewPendingStartMessage(time.Unix(100, 0), 30, 0, a.AppGuid, a.AppVersion, 0, float64(i)/40.0)
+				validStartMessage := models.NewPendingStartMessage(time.Unix(100, 0), 30, 0, a.AppGuid, a.AppVersion, 0, float64(i)/40.0, models.PendingStartMessageReasonInvalid)
 				validStartMessages = append(validStartMessages, validStartMessage)
 				store.SavePendingStartMessages(
 					validStartMessage,
 				)
 
 				//all of these should be deleted:
-				invalidStartMessage := models.NewPendingStartMessage(time.Unix(100, 0), 30, 0, a.AppGuid, a.AppVersion, 1, 1.0)
+				invalidStartMessage := models.NewPendingStartMessage(time.Unix(100, 0), 30, 0, a.AppGuid, a.AppVersion, 1, 1.0, models.PendingStartMessageReasonInvalid)
 				invalidStartMessages = append(invalidStartMessages, invalidStartMessage)
 				store.SavePendingStartMessages(
 					invalidStartMessage,
 				)
 
 				//all of these should be deleted:
-				expiredStartMessage := models.NewPendingStartMessage(time.Unix(100, 0), 0, 20, a.AppGuid, a.AppVersion, 2, 1.0)
+				expiredStartMessage := models.NewPendingStartMessage(time.Unix(100, 0), 0, 20, a.AppGuid, a.AppVersion, 2, 1.0, models.PendingStartMessageReasonInvalid)
 				expiredStartMessage.SentOn = 100
 				expiredStartMessages = append(expiredStartMessages, expiredStartMessage)
 				store.SavePendingStartMessages(
 					expiredStartMessage,
 				)
 
-				stopMessage := models.NewPendingStopMessage(time.Unix(100, 0), 30, 0, a.AppGuid, a.AppVersion, a.InstanceAtIndex(1).InstanceGuid)
+				stopMessage := models.NewPendingStopMessage(time.Unix(100, 0), 30, 0, a.AppGuid, a.AppVersion, a.InstanceAtIndex(1).InstanceGuid, models.PendingStopMessageReasonInvalid)
 				store.SavePendingStopMessages(
 					stopMessage,
 				)
