@@ -8,6 +8,7 @@ import (
 	storepackage "github.com/cloudfoundry/hm9000/store"
 	"github.com/cloudfoundry/hm9000/testhelpers/appfixture"
 	"github.com/cloudfoundry/hm9000/testhelpers/fakelogger"
+	"github.com/cloudfoundry/hm9000/testhelpers/fakemetricsaccountant"
 	"github.com/cloudfoundry/hm9000/testhelpers/fakestoreadapter"
 	"github.com/cloudfoundry/hm9000/testhelpers/faketimeprovider"
 	"github.com/cloudfoundry/yagnats/fakeyagnats"
@@ -18,19 +19,21 @@ import (
 
 var _ = Describe("Sender", func() {
 	var (
-		storeAdapter *fakestoreadapter.FakeStoreAdapter
-		store        storepackage.Store
-		sender       *Sender
-		messageBus   *fakeyagnats.FakeYagnats
-		timeProvider *faketimeprovider.FakeTimeProvider
-		app1         appfixture.AppFixture
-		conf         config.Config
+		storeAdapter      *fakestoreadapter.FakeStoreAdapter
+		store             storepackage.Store
+		sender            *Sender
+		messageBus        *fakeyagnats.FakeYagnats
+		timeProvider      *faketimeprovider.FakeTimeProvider
+		app1              appfixture.AppFixture
+		conf              config.Config
+		metricsAccountant *fakemetricsaccountant.FakeMetricsAccountant
 	)
 
 	BeforeEach(func() {
 		messageBus = fakeyagnats.New()
 		app1 = appfixture.NewAppFixture()
 		conf, _ = config.DefaultConfig()
+		metricsAccountant = fakemetricsaccountant.New()
 
 		timeProvider = &faketimeprovider.FakeTimeProvider{
 			TimeToProvide: time.Unix(int64(10+conf.ActualFreshnessTTL()), 0),
@@ -38,7 +41,7 @@ var _ = Describe("Sender", func() {
 
 		storeAdapter = fakestoreadapter.New()
 		store = storepackage.NewStore(conf, storeAdapter, fakelogger.NewFakeLogger())
-		sender = New(store, conf, messageBus, timeProvider, fakelogger.NewFakeLogger())
+		sender = New(store, metricsAccountant, conf, messageBus, timeProvider, fakelogger.NewFakeLogger())
 		store.BumpActualFreshness(time.Unix(10, 0))
 		store.BumpDesiredFreshness(time.Unix(10, 0))
 	})
@@ -133,6 +136,10 @@ var _ = Describe("Sender", func() {
 				Ω(messageBus.PublishedMessages).ShouldNot(HaveKey("hm9000.start"))
 			})
 
+			It("should not increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStarts).Should(BeEmpty())
+			})
+
 			It("should leave the messages in the queue", func() {
 				messages, _ := store.GetPendingStartMessages()
 				Ω(messages).Should(HaveLen(1))
@@ -153,6 +160,10 @@ var _ = Describe("Sender", func() {
 					InstanceIndex: 0,
 					MessageId:     pendingMessage.MessageId,
 				}))
+			})
+
+			It("should increment the metrics for that message", func() {
+				Ω(metricsAccountant.IncrementedStarts).Should(ContainElement(pendingMessage))
 			})
 
 			It("should not error", func() {
@@ -212,6 +223,10 @@ var _ = Describe("Sender", func() {
 				It("should return an error", func() {
 					Ω(err).Should(HaveOccured())
 				})
+
+				It("should not increment the metrics", func() {
+					Ω(metricsAccountant.IncrementedStarts).Should(BeEmpty())
+				})
 			})
 		})
 
@@ -219,6 +234,10 @@ var _ = Describe("Sender", func() {
 			BeforeEach(func() {
 				sentOn = 130
 				keepAliveTime = 30
+			})
+
+			It("should not increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStarts).Should(BeEmpty())
 			})
 
 			Context("and the keep alive has elapsed", func() {
@@ -294,6 +313,10 @@ var _ = Describe("Sender", func() {
 				messages, _ := store.GetPendingStopMessages()
 				Ω(messages).Should(HaveLen(1))
 			})
+
+			It("should not increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStops).Should(BeEmpty())
+			})
 		})
 
 		Context("and it is time to send the message", func() {
@@ -316,6 +339,10 @@ var _ = Describe("Sender", func() {
 					IsDuplicate:   false,
 					MessageId:     pendingMessage.MessageId,
 				}))
+			})
+
+			It("should increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStops).Should(ContainElement(pendingMessage))
 			})
 
 			Context("when the message should be kept alive", func() {
@@ -370,6 +397,10 @@ var _ = Describe("Sender", func() {
 
 				It("should return an error", func() {
 					Ω(err).Should(HaveOccured())
+
+				})
+				It("should not increment the metrics", func() {
+					Ω(metricsAccountant.IncrementedStops).Should(BeEmpty())
 				})
 			})
 		})
@@ -382,6 +413,10 @@ var _ = Describe("Sender", func() {
 
 			It("should not error", func() {
 				Ω(err).ShouldNot(HaveOccured())
+			})
+
+			It("should not increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStops).Should(BeEmpty())
 			})
 
 			Context("and the keep alive has elapsed", func() {
@@ -444,6 +479,10 @@ var _ = Describe("Sender", func() {
 			It("should not send the start message", func() {
 				Ω(messageBus.PublishedMessages).ShouldNot(HaveKey("hm9000.start"))
 			})
+
+			It("should not increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStarts).Should(BeEmpty())
+			})
 		}
 
 		assertMessageWasSent := func() {
@@ -464,6 +503,10 @@ var _ = Describe("Sender", func() {
 					InstanceIndex: 0,
 					MessageId:     pendingMessage.MessageId,
 				}))
+			})
+
+			It("should increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStarts).Should(ContainElement(pendingMessage))
 			})
 		}
 
@@ -570,6 +613,10 @@ var _ = Describe("Sender", func() {
 			It("should not send the stop message", func() {
 				Ω(messageBus.PublishedMessages).ShouldNot(HaveKey("hm9000.stop"))
 			})
+
+			It("should not increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStops).Should(BeEmpty())
+			})
 		}
 
 		assertMessageWasSent := func(indexToStop int, isDuplicate bool) {
@@ -593,6 +640,10 @@ var _ = Describe("Sender", func() {
 					IsDuplicate:   isDuplicate,
 					MessageId:     pendingMessage.MessageId,
 				}))
+			})
+
+			It("should increment the metrics", func() {
+				Ω(metricsAccountant.IncrementedStops).Should(ContainElement(pendingMessage))
 			})
 		}
 
@@ -693,7 +744,7 @@ var _ = Describe("Sender", func() {
 			conf, _ = config.DefaultConfig()
 			conf.SenderMessageLimit = 20
 
-			sender = New(store, conf, messageBus, timeProvider, fakelogger.NewFakeLogger())
+			sender = New(store, metricsAccountant, conf, messageBus, timeProvider, fakelogger.NewFakeLogger())
 
 			for i := 0; i < 40; i += 1 {
 				a := appfixture.NewAppFixture()
@@ -739,6 +790,7 @@ var _ = Describe("Sender", func() {
 			remainingStartMessages, _ := store.GetPendingStartMessages()
 			Ω(remainingStartMessages).Should(HaveLen(20))
 			Ω(messageBus.PublishedMessages["hm9000.start"]).Should(HaveLen(20))
+			Ω(metricsAccountant.IncrementedStarts).Should(HaveLen(20))
 
 			for _, remainingStartMessage := range remainingStartMessages {
 				Ω(validStartMessages).Should(ContainElement(remainingStartMessage))
@@ -764,6 +816,7 @@ var _ = Describe("Sender", func() {
 			remainingStopMessages, _ := store.GetPendingStopMessages()
 			Ω(remainingStopMessages).Should(BeEmpty())
 			Ω(messageBus.PublishedMessages["hm9000.stop"]).Should(HaveLen(40))
+			Ω(metricsAccountant.IncrementedStops).Should(HaveLen(40))
 		})
 	})
 })

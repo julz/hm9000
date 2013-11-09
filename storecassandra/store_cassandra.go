@@ -99,6 +99,14 @@ func (s *StoreCassandra) createTables() error {
 
 }
 
+func (s *StoreCassandra) SaveMetric(metric string, value int) error {
+	return nil
+}
+
+func (s *StoreCassandra) GetMetric(metric string) (int, error) {
+	return 0, nil
+}
+
 func (s *StoreCassandra) newBatch() *gocql.Batch {
 	batch := gocql.NewBatch(gocql.LoggedBatch)
 	batch.Cons = s.consistency
