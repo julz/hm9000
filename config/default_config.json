@@ -38,7 +38,7 @@
     "metrics_server_user": "metrics_server_user",
     "metrics_server_password": "canHazMetrics?",
 
-    "log_level": "INFO",
+    "log_level": "DEBUG",
 
     "sender_nats_start_subject": "hm9000.start",
     "sender_nats_stop_subject": "hm9000.stop",

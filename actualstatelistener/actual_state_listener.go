@@ -1,6 +1,7 @@
 package actualstatelistener
 
 import (
+	"fmt"
 	"github.com/cloudfoundry/hm9000/config"
 	"github.com/cloudfoundry/hm9000/helpers/logger"
 	"github.com/cloudfoundry/hm9000/helpers/metricsaccountant"
@@ -58,10 +59,10 @@ func (listener *ActualStateListener) Start() {
 			return
 		}
 
-		listener.logger.Debug("Decoded the heartbeat")
+		listener.logger.Debug(fmt.Sprintf("Decoded a heartbeat: %s", heartbeat.DeaGuid))
 		err = listener.store.SyncHeartbeat(heartbeat)
 		if err != nil {
-			listener.logger.Error("Could not put instance heartbeats in store:", err)
+			listener.logger.Error("Could not put heartbeat in store:", err, heartbeat.LogDescription())
 			return
 		}
 

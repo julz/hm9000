@@ -10,10 +10,15 @@ import (
 func (store *RealStore) SyncHeartbeat(incomingHeartbeat models.Heartbeat) error {
 	t := time.Now()
 
+	store.logger.Debug("Syncing heartbeat")
+
+	tGet := time.Now()
 	existingInstanceHeartbeats, err := store.GetInstanceHeartbeats()
 	if err != nil {
+		store.logger.Error("Failed to load heartbeats", err)
 		return err
 	}
+	store.logger.Debug(fmt.Sprintf("Read (%d) heartbeats took: %s", len(existingInstanceHeartbeats), time.Since(tGet)))
 
 	filteredExistingInstanceHeartbeats := map[string]models.InstanceHeartbeat{}
 
@@ -42,8 +47,10 @@ func (store *RealStore) SyncHeartbeat(incomingHeartbeat models.Heartbeat) error 
 	tSave := time.Now()
 	err = store.adapter.Set(nodesToSave)
 	dtSave := time.Since(tSave).Seconds()
+	store.logger.Debug(fmt.Sprintf("Saved (%d) things took: %s", len(nodesToSave), time.Since(tSave)))
 
 	if err != nil {
+		store.logger.Error("Failed to save", err)
 		return err
 	}
 
@@ -61,8 +68,10 @@ func (store *RealStore) SyncHeartbeat(incomingHeartbeat models.Heartbeat) error 
 	tDelete := time.Now()
 	err = store.adapter.Delete(keysToDelete...)
 	dtDelete := time.Since(tDelete).Seconds()
+	store.logger.Debug(fmt.Sprintf("Deleted (%d) things took: %s: %v", len(keysToDelete), time.Since(tDelete), keysToDelete))
 
 	if err != nil {
+		store.logger.Error("Failed to delete", err)
 		return err
 	}
 
@@ -79,30 +88,46 @@ func (store *RealStore) SyncHeartbeat(incomingHeartbeat models.Heartbeat) error 
 }
 
 func (store *RealStore) GetInstanceHeartbeats() (results []models.InstanceHeartbeat, err error) {
+	tList := time.Now()
 	node, err := store.adapter.ListRecursively(store.SchemaRoot() + "/apps/actual")
+	store.logger.Debug(fmt.Sprintf("GETINSTANCEHEARTBEATS List recursively took: %s", time.Since(tList)))
+
 	if err == storeadapter.ErrorKeyNotFound {
 		return results, nil
 	} else if err != nil {
+		store.logger.Error("GETINSTANCEHEARTBEATS Failed to list recurisvely", err)
 		return results, err
 	}
 
+	tDeas := time.Now()
 	unexpiredDeas, err := store.unexpiredDeas()
+	store.logger.Debug(fmt.Sprintf("GETINSTANCEHEARTBEATS Unexpired Deas: %s", time.Since(tDeas)))
 	if err != nil {
+		store.logger.Error("GETINSTANCEHEARTBEATS Failed Unexpired Deas", err)
 		return results, err
 	}
 
 	expiredKeys := []string{}
+	tParse := time.Now()
 	for _, actualNode := range node.ChildNodes {
 		heartbeats, toDelete, err := store.heartbeatsForNode(actualNode, unexpiredDeas)
 		if err != nil {
+			store.logger.Error("GETINSTANCEHEARTBEATS Failed To Parse", err)
 			return []models.InstanceHeartbeat{}, nil
 		}
 		results = append(results, heartbeats...)
 		expiredKeys = append(expiredKeys, toDelete...)
 	}
+	store.logger.Debug(fmt.Sprintf("GETINSTANCEHEARTBEATS Parsing: %s", time.Since(tParse)))
 
+	tDel := time.Now()
 	err = store.adapter.Delete(expiredKeys...)
-	return results, err
+	store.logger.Debug(fmt.Sprintf("GETINSTANCEHEARTBEATS Deleting keys (%d): %s", len(expiredKeys), time.Since(tDel)))
+	if err != nil {
+		store.logger.Error("GETINSTANCEHEARTBEATS Failed To delete keys", err)
+		return results, err
+	}
+	return results, nil
 }
 
 func (store *RealStore) GetInstanceHeartbeatsForApp(appGuid string, appVersion string) (results []models.InstanceHeartbeat, err error) {
