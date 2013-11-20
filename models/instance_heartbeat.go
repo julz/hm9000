@@ -2,7 +2,9 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"strings"
 )
 
 type InstanceState string
@@ -38,6 +40,33 @@ func NewInstanceHeartbeatFromJSON(encoded []byte) (InstanceHeartbeat, error) {
 func (instance InstanceHeartbeat) ToJSON() []byte {
 	encoded, _ := json.Marshal(instance)
 	return encoded
+}
+
+func NewInstanceHeartbeatFromStoreFormat(appGuid string, appVersion string, instanceGuid string, encoded []byte) (InstanceHeartbeat, error) {
+	components := strings.Split(string(encoded), "|")
+	instanceIndex, err := strconv.Atoi(components[0])
+	if err != nil {
+		return InstanceHeartbeat{}, err
+	}
+	stateTimestamp, err := strconv.ParseFloat(components[2], 64)
+	if err != nil {
+		return InstanceHeartbeat{}, err
+	}
+
+	return InstanceHeartbeat{
+		CCPartition:    "default",
+		AppGuid:        appGuid,
+		AppVersion:     appVersion,
+		InstanceGuid:   instanceGuid,
+		InstanceIndex:  instanceIndex,
+		State:          InstanceState(components[1]),
+		StateTimestamp: stateTimestamp,
+		DeaGuid:        components[3],
+	}, err
+}
+
+func (instance InstanceHeartbeat) ToStoreFormat() []byte {
+	return []byte(fmt.Sprintf("%d|%s|%.0f|%s", instance.InstanceIndex, instance.State, instance.StateTimestamp, instance.DeaGuid))
 }
 
 func (instance InstanceHeartbeat) StoreKey() string {

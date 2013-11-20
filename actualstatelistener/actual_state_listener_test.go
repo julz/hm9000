@@ -158,7 +158,7 @@ var _ = Describe("Actual state listener", func() {
 
 		Context("when the save succeeds", func() {
 			It("should log about the heartbeat", func() {
-				Ω(logger.LoggedSubjects).Should(ContainElement("Saved a Heartbeat"))
+				Ω(logger.LoggedSubjects).Should(ContainElement("Synced a Heartbeat"))
 				Ω(logger.LoggedMessages).Should(ContainElement(ContainSubstring(`"DEA":"%s"`, heartbeat.DeaGuid)))
 			})
 
@@ -189,7 +189,7 @@ var _ = Describe("Actual state listener", func() {
 			})
 
 			It("logs about the failed save", func() {
-				Ω(logger.LoggedSubjects).Should(ContainElement(ContainSubstring("Could not put instance heartbeats in store")))
+				Ω(logger.LoggedSubjects).Should(ContainElement(ContainSubstring("Could not put heartbeat in store")))
 			})
 		})
 	})

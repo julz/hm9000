@@ -19,22 +19,30 @@ var etcdRunner storerunner.StoreRunner
 var listener *exec.Cmd
 
 func TestStress(t *testing.T) {
+	cmd := exec.Command("go", "install", "github.com/cloudfoundry/hm9000")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		println("FAILED TO COMPILE HM9000")
+		println(string(output))
+		os.Exit(1)
+	}
+
 	natsRunner = natsrunner.NewNATSRunner(4222)
 	natsRunner.Start()
 
 	etcdRunner = storerunner.NewETCDClusterRunner(4001, 1)
 	etcdRunner.Start()
 
-	listener = exec.Command("hm9000", "listen", "--config=/Users/pivotal/workspace/hm-workspace/src/github.com/cloudfoundry/hm9000/config/default_config.json")
-	out, _ := listener.StdoutPipe()
-	err, _ := listener.StderrPipe()
+	listener = exec.Command("hm9000", "listen", "--config=/Users/onsi/workspace/hm-workspace/src/github.com/cloudfoundry/hm9000/config/default_config.json")
+	outPipe, _ := listener.StdoutPipe()
+	errPipe, _ := listener.StderrPipe()
 
 	go func() {
-		io.Copy(os.Stdout, out)
+		io.Copy(os.Stdout, outPipe)
 	}()
 
 	go func() {
-		io.Copy(os.Stdout, err)
+		io.Copy(os.Stdout, errPipe)
 	}()
 
 	listener.Start()

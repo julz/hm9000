@@ -3,6 +3,7 @@ package storecassandra
 import (
 	"github.com/cloudfoundry/hm9000/config"
 	"github.com/cloudfoundry/hm9000/helpers/timeprovider"
+	"github.com/cloudfoundry/hm9000/models"
 	"time"
 	"tux21b.org/v1/gocql"
 )
@@ -45,6 +46,10 @@ func New(clusterURLs []string, consistency gocql.Consistency, conf config.Config
 	}
 
 	return s, nil
+}
+
+func (s *StoreCassandra) SyncHeartbeats(heartbeats ...models.Heartbeat) error {
+	return nil
 }
 
 func (s *StoreCassandra) createKeySpace() error {

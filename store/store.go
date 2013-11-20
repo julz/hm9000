@@ -9,6 +9,7 @@ import (
 	"github.com/cloudfoundry/hm9000/storeadapter"
 	"reflect"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,7 @@ type Store interface {
 	GetDesiredState() (map[string]models.DesiredAppState, error)
 
 	SyncHeartbeat(heartbeat models.Heartbeat) error
+	SyncHeartbeats(heartbeat ...models.Heartbeat) error
 	GetInstanceHeartbeats() (results []models.InstanceHeartbeat, err error)
 	GetInstanceHeartbeatsForApp(appGuid string, appVersion string) (results []models.InstanceHeartbeat, err error)
 
@@ -62,13 +64,20 @@ type RealStore struct {
 	config  config.Config
 	adapter storeadapter.StoreAdapter
 	logger  logger.Logger
+
+	heartbeatCache           map[string]models.InstanceHeartbeat
+	lastHeartbeatCacheLookup time.Time
+	heartbeatCacheLock       *sync.Mutex
 }
 
 func NewStore(config config.Config, adapter storeadapter.StoreAdapter, logger logger.Logger) *RealStore {
 	return &RealStore{
-		config:  config,
-		adapter: adapter,
-		logger:  logger,
+		config:                   config,
+		adapter:                  adapter,
+		logger:                   logger,
+		heartbeatCache:           map[string]models.InstanceHeartbeat{},
+		heartbeatCacheLock:       &sync.Mutex{},
+		lastHeartbeatCacheLookup: time.Unix(0, 0),
 	}
 }
 

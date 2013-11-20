@@ -1,9 +1,16 @@
 package storeadapter
 
 import (
+	"fmt"
 	"github.com/cloudfoundry/hm9000/helpers/workerpool"
 	"github.com/coreos/go-etcd/etcd"
 )
+
+const commonWorkerPool = true
+
+func init() {
+	fmt.Printf("COMMON WORKER POOL: %t\n", commonWorkerPool)
+}
 
 type ETCDStoreAdapter struct {
 	urls       []string
@@ -96,13 +103,17 @@ func (adapter *ETCDStoreAdapter) Get(key string) (StoreNode, error) {
 	var response *etcd.Response
 	var err error
 
-	//we route through the worker pool to enable usage tracking
-	adapter.workerPool.ScheduleWork(func() {
-		response, err = adapter.client.Get(key, false)
-		done <- true
-	})
+	if commonWorkerPool {
+		//we route through the worker pool to enable usage tracking
+		adapter.workerPool.ScheduleWork(func() {
+			response, err = adapter.client.Get(key, false)
+			done <- true
+		})
 
-	<-done
+		<-done
+	} else {
+		response, err = adapter.client.Get(key, false)
+	}
 
 	if adapter.isTimeoutError(err) {
 		return StoreNode{}, ErrorTimeout
@@ -138,12 +149,16 @@ func (adapter *ETCDStoreAdapter) ListRecursively(key string) (StoreNode, error) 
 	var err error
 
 	//we route through the worker pool to enable usage tracking
-	adapter.workerPool.ScheduleWork(func() {
-		response, err = adapter.client.GetAll(key, false)
-		done <- true
-	})
+	if commonWorkerPool {
+		adapter.workerPool.ScheduleWork(func() {
+			response, err = adapter.client.GetAll(key, false)
+			done <- true
+		})
 
-	<-done
+		<-done
+	} else {
+		response, err = adapter.client.GetAll(key, false)
+	}
 
 	if adapter.isTimeoutError(err) {
 		return StoreNode{}, ErrorTimeout
